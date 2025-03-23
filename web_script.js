@@ -18,6 +18,7 @@
         serverHost: 'http://127.0.0.1:8000', // 本地服务的主机地址
         thread: 60, // 分数阈值，低于这个就不发消息了
         timestampTimeout: 3000, // 时间戳过期时间，单位毫秒，根据当前网络设定，建议不要太大。
+        onlyGreet: false, // 是否只打招呼，默认为false，即打招呼和代聊天
     };
 
     // 搜索路径
@@ -793,6 +794,11 @@
                     logger.divider();
                     // 判断职位链接是否为空
                     if (jobHrefs.length === 0) {
+                        // 判断是否需要代聊天
+                        if (OPTIONS.onlyGreet) {
+                            await nextPage();
+                            return loop();
+                        }
                         logger.add('开始处理聊天消息');
                         tools.openTabNSetTimestamp(this.whiteList.chat, this.targets.chat);
                         return;
@@ -1055,7 +1061,7 @@
                         worksSended,
                         confirmAddr,
                         talked: !msgs.every(d => d.role === 'user'),
-                        jobEl: await tools.endlessFind('a[ka=geek_chat_job_detail]')
+                        jobEl: (await tools.endlessFind('*[ka=geek_chat_job_detail]')).querySelector('.city')
                     };
                 };
 
