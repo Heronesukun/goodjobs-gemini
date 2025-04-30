@@ -11,6 +11,6 @@ class Config:
     # 本地的简历名称
     resume_name = 'resume.md'
     # 思考模型
-    think_model = 'deepseek-r1:8b'
+    think_model = 'qwen3'
     # 聊天模型
-    chat_model = 'qwen2.5'
+    chat_model = 'qwen3'

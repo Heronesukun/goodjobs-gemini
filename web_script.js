@@ -21,6 +21,52 @@
         onlyGreet: false, // 是否只打招呼，默认为false，即打招呼和代聊天
     };
 
+    // 元素选择器
+    const SELECTORS = {
+        ZHIPIN: {
+            SEARCH: {
+                SEARCHINPUT: 'input', // 搜索框
+                SEARCHBTN: '.search-btn', // 搜索按钮
+                JOBLISTCTN: '.job-list-container', // 职位列表容器
+                JOBLIST: '.rec-job-list', // 职位列表
+                JOBHREFS: '.job-card-box .job-name', // 职位链接
+            },
+            DETAIL: {
+                STARTCHAT: '.btn-startchat', // 开始聊天按钮
+                NAMEBOX: '.name', // 职位名称盒子
+                JOBNAME: 'h1', // 职位名称
+                SALARY: '.salary', // 职位薪资
+                DETAIL: '.job-sec-text', // 职位详情
+                CHATURL: 'redirect-url', // 聊天链接
+            },
+            CHAT: {
+                // 聊天
+                CHATINPUT: '#chat-input', // 聊天输入框
+                MSGSEND: '.btn-send', // 消息发送按钮
+                // 聊天记录
+                HISTORYCTN: '.chat-message', // 聊天记录容器
+                USEFULMSG: '.item-friend,.item-myself', // 有效的文字聊天记录项
+                MSGCONTENT: '.message-content .text', // 聊天记录内容
+                // 职位
+                JOBEL: '*[ka=geek_chat_job_detail]', // 职位元素
+                JOBCITY: '.city', // 职位城市
+                // 简历
+                RESUMESEND: '.toolbar-btn.tooltip.tooltip-top', // 简历发送按钮
+                RESUMEMODAL: '.panel-resume', // 简历发送弹窗，有的时候简历按钮点击会出来一个小弹窗
+                RESUMEMODALCONFIRM: '.btn-sure-v2', // 简历发送弹窗确认按钮
+                RESUMELIST: '.resume-list', // 简历列表
+                RESUMELISTITEM: 'li', // 简历列表项
+                RESUMESENDCONFIRM: '.btn-confirm', // 简历发送确认按钮
+                // 联系人
+                CONTACTLISTEMPTY: '.no-data', // 联系人列表为空
+                CONTACTLIST: '.user-list-content', // 联系人列表
+                CONTACTLISTITEM: 'li', // 联系人列表项
+                NEWMSGNOTICE: '.notice-badge', // 新消息通知图标
+                USERNAME: '.name-text', // 联系人名称
+            }
+        },
+    };
+
     // 搜索路径
     const SEARCHPATH = {
         zhipin: '/web/geek/job',
@@ -616,6 +662,7 @@
             let page = 0;
             // 记录职位链接
             let jobHrefs = [];
+            let elsLen = 0;
             // 缓存
             let started = false;
 
@@ -661,8 +708,8 @@
             // 执行搜索
             const search = async (kw) => {
                 try {
-                    const input = await tools.endlessFind('input');
-                    const btn = await tools.endlessFind('.search-btn');
+                    const input = await tools.endlessFind(SELECTORS.ZHIPIN.SEARCH.SEARCHINPUT);
+                    const btn = await tools.endlessFind(SELECTORS.ZHIPIN.SEARCH.SEARCHBTN);
                     tools.inputText(input, kw);
                     btn.click();
                 } catch (e) {
@@ -674,9 +721,9 @@
             // 获取职位链接
             const getJobHrefs = async () => {
                 try {
-                    const jobUl = await tools.endlessFind('.job-list-box');
-                    const aList = jobUl.querySelectorAll('.job-card-left');
-                    return Array.from(aList).map(a => a.href);
+                    const jobUl = await tools.endlessFind(SELECTORS.ZHIPIN.SEARCH.JOBLIST);
+                    const aList = jobUl.querySelectorAll(SELECTORS.ZHIPIN.SEARCH.JOBHREFS);
+                    return [Array.from(aList).map(a => a.href).slice(elsLen), aList];
                 } catch (e) {
                     logger.add('获取职位链接出错');
                     throw new Error('获取职位链接出错');
@@ -685,20 +732,20 @@
 
             // 下一页
             const nextPage = async () => {
-                page++;
-                if (page > 1) {
-                    const nextBtn = await tools.endlessFind('.ui-icon-arrow-right');
-                    if (nextBtn.parentElement.classList.contains('disabled')) {
-                        logger.add('当前为最后一页');
-                        page--;
-                        loop();
-                        return;
-                    }
-                    nextBtn.click();
+                let els;
+                [jobHrefs, els] = await getJobHrefs();
+                if (els.length === elsLen) {
+                    logger.add('没有更多职位了');
+                    return false;
                 }
+                elsLen = els.length;
+                els[elsLen - 1].scrollIntoView();
+                page++;
                 logger.add(`开始浏览第 ${page} 页`);
-                jobHrefs = await getJobHrefs();
+                return true;
             };
+
+            document.nextPage = nextPage
 
             // 获取职位信息
             const getJobInfo = async (href) => {
@@ -761,7 +808,8 @@
                     if (from !== this.targets.chat) return;
                     if (data) {
                         logger.divider();
-                        await nextPage();
+                        const hasNext = await nextPage();
+                        if (!hasNext) return;
                         loop();
                     } else {
                         logger.add(`消息处理出错，重试中...`);
@@ -796,7 +844,8 @@
                     if (jobHrefs.length === 0) {
                         // 判断是否需要代聊天
                         if (OPTIONS.onlyGreet) {
-                            await nextPage();
+                            const hasNext = await nextPage();
+                            if (!hasNext) return;
                             return loop();
                         }
                         logger.add('开始处理聊天消息');
@@ -875,12 +924,12 @@
 
             // 获取职位信息
             const getJobInfo = () => {
-                const chatBtn = document.querySelector('.btn-startchat');
-                const nameBox = document.querySelector('.name');
-                const title = nameBox.querySelector('h1').innerText;
-                const salary = nameBox.querySelector('.salary').innerText;
-                const detail = document.querySelector('.job-sec-text').innerText;
-                const chatUrl = chatBtn && chatBtn.getAttribute('redirect-url');
+                const chatBtn = document.querySelector(SELECTORS.ZHIPIN.DETAIL.STARTCHAT);
+                const nameBox = document.querySelector(SELECTORS.ZHIPIN.DETAIL.NAMEBOX);
+                const title = nameBox.querySelector(SELECTORS.ZHIPIN.DETAIL.JOBNAME).innerText;
+                const salary = nameBox.querySelector(SELECTORS.ZHIPIN.DETAIL.SALARY).innerText;
+                const detail = document.querySelector(SELECTORS.ZHIPIN.DETAIL.DETAIL).innerText;
+                const chatUrl = chatBtn && chatBtn.getAttribute(SELECTORS.ZHIPIN.DETAIL.CHATURL);
                 const addUrl = chatBtn && chatBtn.dataset.url;
                 return {
                     title,
@@ -938,10 +987,10 @@
             const sendMsg = (text) => {
                 return new Promise(async (resolve, reject) => {
                     try {
-                        const ipt = await tools.endlessFind('#chat-input');
+                        const ipt = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.CHATINPUT);
                         ipt.innerText = text;
                         await tools.asyncSleep(600);
-                        const btn = await tools.endlessFind('.btn-send');
+                        const btn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.MSGSEND);
                         btn.click();
                         resolve();
                     } catch (e) {
@@ -986,15 +1035,15 @@
 
             // 获取聊天记录信息
             const getChatInfo = async () => {
-                const ctn = await tools.endlessFind('.chat-message');
+                const ctn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.HISTORYCTN);
 
                 const getMsgs = async () => {
-                    const lis = Array.from(ctn.querySelectorAll('.item-friend,.item-myself'));
+                    const lis = Array.from(ctn.querySelectorAll(SELECTORS.ZHIPIN.CHAT.USEFULMSG));
                     // 提取历史记录
                     const msgs = [];
                     lis.forEach(li => {
                         const role = li.classList.contains('item-friend') ? 'user' : 'assistant';
-                        const msgBox = li.querySelector('.message-content .text');
+                        const msgBox = li.querySelector(SELECTORS.ZHIPIN.CHAT.MSGCONTENT);
                         if (!msgBox) return;
                         msgs.push({
                             role,
@@ -1061,7 +1110,7 @@
                         worksSended,
                         confirmAddr,
                         talked: !msgs.every(d => d.role === 'user'),
-                        jobEl: (await tools.endlessFind('*[ka=geek_chat_job_detail]')).querySelector('.city')
+                        jobEl: (await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.JOBEL)).querySelector(SELECTORS.ZHIPIN.CHAT.JOBCITY)
                     };
                 };
 
@@ -1081,21 +1130,21 @@
 
             // 发送简历
             const sendResume = async () => {
-                const sendBtn = await tools.endlessFind('.toolbar-btn.tooltip.tooltip-top');
+                const sendBtn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.RESUMESEND);
                 sendBtn.click();
 
                 // 可能是弹一个小窗
-                const smallDialog = await tools.endlessFind('.panel-resume').catch(() => null);
+                const smallDialog = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.RESUMEMODAL).catch(() => null);
                 if (smallDialog) {
-                    smallDialog.querySelector('.btn-sure-v2').click();
+                    smallDialog.querySelector(SELECTORS.ZHIPIN.CHAT.RESUMEMODALCONFIRM).click();
                     await sendMsg('已发送，请查收');
                     return;
                 }
 
                 // 弹出大窗让选择
-                const resumeCtn = await tools.endlessFind('.resume-list');
-                const confirm = await tools.endlessFind('.btn-confirm');
-                const resume = resumeCtn.querySelectorAll('li')[OPTIONS.resumeIndex];
+                const resumeCtn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.RESUMELIST);
+                const confirm = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.RESUMESENDCONFIRM);
+                const resume = resumeCtn.querySelectorAll(SELECTORS.ZHIPIN.CHAT.RESUMELISTITEM)[OPTIONS.resumeIndex];
                 await tools.asyncSleep(300);
                 resume.click();
                 await tools.asyncSleep(300);
@@ -1157,15 +1206,22 @@
                 let lastTop = 0;
                 const once = async () => {
                     // 获取联系人列表
-                    const ctn = await tools.endlessFind('.user-list-content');
-                    const lis = ctn.querySelectorAll('li');
+                    let empty = false;
+                    const ctn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.CONTACTLIST).catch(e => {
+                        if (document.querySelector(SELECTORS.ZHIPIN.CHAT.CONTACTLISTEMPTY)) {
+                            status('当前暂无消息');
+                            empty = true;
+                        }
+                    });
+                    if (empty) return;
+                    const lis = ctn.querySelectorAll(SELECTORS.ZHIPIN.CHAT.CONTACTLISTITEM);
                     // 遍历新消息
                     for (const ls of lis) {
                         try {
                             // 无新消息
-                            if (!ls.querySelector('.notice-badge')) continue;
+                            if (!ls.querySelector(SELECTORS.ZHIPIN.CHAT.NEWMSGNOTICE)) continue;
                             // 获取联系人信息
-                            const name = ls.querySelector('.name-text');
+                            const name = ls.querySelector(SELECTORS.ZHIPIN.CHAT.USERNAME);
                             const company = name.nextElementSibling.innerText;
                             divider();
                             status(`[${company} - ${name.innerText}] 发来一条新消息`);
