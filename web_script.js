@@ -14,11 +14,17 @@
 
     // 配置项
     const OPTIONS = {
-        resumeIndex: 0, // 第几份简历，从 0 开始递增
+        resumeIndex: 1, // 第几份简历，从 0 开始递增
         serverHost: 'http://127.0.0.1:8000', // 本地服务的主机地址
         thread: 60, // 分数阈值，低于这个就不发消息了
         timestampTimeout: 3000, // 时间戳过期时间，单位毫秒，根据当前网络设定，建议不要太大。
         onlyGreet: false, // 是否只打招呼，默认为false，即打招呼和代聊天
+        // 新增：人机检测规避配置
+        antiDetection: {
+            minDelay: 5000, // 最小延时：1分半（90秒）
+            maxDelay: 15000, // 最大延时：3分钟（180秒）
+            enabled: true, // 是否启用延时功能
+        }
     };
 
     // 元素选择器
@@ -162,6 +168,42 @@
             localStorage.setItem(key, new Date().getTime());
             window.open(href, self ? '_self' : key);
         },
+        // 新增：生成随机延时
+        getRandomDelay() {
+            if (!OPTIONS.antiDetection.enabled) {
+                return 0;
+            }
+            const min = OPTIONS.antiDetection.minDelay;
+            const max = OPTIONS.antiDetection.maxDelay;
+            return Math.floor(Math.random() * (max - min + 1)) + min;
+        },
+        // 新增：带延时的异步等待
+        async delayedAction(action, showProgress = true) {
+            const delay = this.getRandomDelay();
+            if (delay === 0) {
+                return await action();
+            }
+
+            if (showProgress) {
+                banner(`为规避检测，将在 ${Math.round(delay / 1000)} 秒后执行操作...`);
+            }
+
+            // 显示倒计时
+            if (showProgress) {
+                let remaining = Math.ceil(delay / 1000);
+                const countdownInterval = setInterval(() => {
+                    remaining--;
+                    if (remaining > 0) {
+                        banner(`倒计时: ${remaining} 秒`);
+                    } else {
+                        clearInterval(countdownInterval);
+                    }
+                }, 1000);
+            }
+
+            await this.asyncSleep(delay);
+            return await action();
+        }
     };
 
     /**
@@ -983,21 +1025,24 @@
                 this.__broadcast(target);
             };
 
-            // 发送消息
-            const sendMsg = (text) => {
-                return new Promise(async (resolve, reject) => {
-                    try {
-                        const ipt = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.CHATINPUT);
-                        ipt.innerText = text;
-                        await tools.asyncSleep(600);
-                        const btn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.MSGSEND);
-                        btn.click();
-                        resolve();
-                    } catch (e) {
-                        reject();
-                    }
-                })
-            };
+// 发送消息
+const sendMsg = (text) => {
+    return new Promise(async (resolve, reject) => {
+        try {
+            const ipt = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.CHATINPUT);
+            ipt.innerText = text;
+            await tools.asyncSleep(600);
+            const btn = await tools.endlessFind(SELECTORS.ZHIPIN.CHAT.MSGSEND);
+            // 使用延时功能包裹点击发送按钮的操作
+            await tools.delayedAction(async () => {
+                btn.click();
+            });
+            resolve();
+        } catch (e) {
+            reject();
+        }
+    });
+};
 
             // 打招呼
             const sayHi = async () => {

@@ -5,31 +5,47 @@ Date: 2025-02-16 01:13:59
 LastEditTime: 2025-03-10 22:03:47
 LastEditors: 嘎嘣脆的贝爷
 '''
-from ollama import chat, Message
+# 导入Google GenAI SDK
+from google import genai
+from google.genai import types
 from prompts import INTRODUCE, TAGS, CHARACTER, JOBSOURCE, CHAT, INTERSET, NEEDRESUME, NEEDWORKS
 from config import Config
 from tools import getLLMReply, getMatchScore
 from schema import JobScore, InterestValue, NeedResume, NeedWorks
 import json
 
+# 初始化Google GenAI客户端
+client = genai.Client(api_key=Config.api_key)
 
 # 默认参数
-options = {
-    "temperature": 0.6,
-    "num_ctx": 10240
-}
+options = Config.default_options
 
 
 def __streamChat(sys_prompt: str, prompt: str, options: dict = options, model: str = Config.think_model) -> str:
     """自定义的流式回复"""
     content = ''
-    for i in chat(model, [
-        Message(role='system', content=sys_prompt),
-        Message(role='user', content=prompt)
-    ], stream=True, options=options):
-        word = i.message.content
-        content += word
-        print(word, end="", flush=True)
+    # 创建消息内容 - 移除system role的Content
+    contents = [
+        types.Part.from_text(text=prompt)
+    ]
+    
+    # 配置生成参数 - 添加system_instruction
+    config = types.GenerateContentConfig(
+        system_instruction=sys_prompt,
+        temperature=options.get("temperature", 0.6),
+        max_output_tokens=options.get("max_output_tokens", 8192),
+    )
+    
+    # 流式生成内容
+    for chunk in client.models.generate_content_stream(
+        model=model,
+        contents=contents,
+        config=config
+    ):
+        if chunk.text:
+            word = chunk.text
+            content += word
+            print(word, end="", flush=True)
     print()
     return getLLMReply(content)
 
@@ -52,38 +68,91 @@ def getCharacter(resume: str):
 def calcJobScore(job: str, resume: str):
     """计算职位匹配度"""
     content = ''
-    for i in chat(Config.think_model, [
-        Message(role='system', content=JOBSOURCE),
-        Message(
-            role='user',
-            content=f"# 职位介绍:\n{job}\n\n# 我的简历:\n{resume}",
-        )
-    ], stream=True, options={
-            "temperature": 0.6,
-            "num_ctx": 10240,
-    }):
-        word = i.message.content
-        content += word
-        print(word, end="", flush=True)
+    # 创建消息内容
+    contents = [
+        types.Part.from_text(text=f"# 职位介绍:\n{job}\n\n# 我的简历:\n{resume}")
+    ]
+    
+    # 配置生成参数
+    config = types.GenerateContentConfig(
+        system_instruction=JOBSOURCE,
+        temperature=options.get("temperature", 0.6),
+        max_output_tokens=options.get("max_output_tokens", 8192),
+    )
+    
+    # 流式生成内容
+    for chunk in client.models.generate_content_stream(
+        model=Config.think_model,
+        contents=contents,
+        config=config
+    ):
+        if chunk.text:
+            word = chunk.text
+            content += word
+            print(word, end="", flush=True)
     print()
     reply = getLLMReply(content)
     # 先直接提取数字
     r = getMatchScore(reply)
-    if r != None:
+    if r is not None:
         return r
     # 实在不行用大模型提取
-    return json.loads(chat(Config.think_model, [
-        Message(role='user', content='从以下内容中提取匹配度数值: \n' + reply),
-    ], format=JobScore.model_json_schema()).message.content)['score']
+    extract_contents = [
+        types.Part.from_text(text=f"从以下内容中提取匹配度数值: \n{reply}")
+    ]
+    
+    # 配置生成参数，使用结构化输出
+    extract_config = types.GenerateContentConfig(
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema={
+            "type": "object",
+            "properties": {
+                "score": {"type": "integer", "description": "匹配度分数"}
+            },
+            "required": ["score"]
+        }
+    )
+    
+    response = client.models.generate_content(
+        model=Config.think_model,
+        contents=extract_contents,
+        config=extract_config
+    )
+    
+    return json.loads(response.text)["score"]
 
 
 def __calcInterestValue(msgs: list):
     """计算兴趣值"""
-    msgs.insert(0, Message(role='system', content=INTERSET))
-    return json.loads(chat(Config.chat_model, msgs, format=InterestValue.model_json_schema(), options={
-        "temperature": 0.2,
-        "num_ctx": 10240,
-    }).message.content)['value']
+    # 创建消息内容
+    contents = []
+    
+    # 添加对话历史
+    for msg in msgs:
+        contents.append(types.Part.from_text(text=msg.content))
+    
+    # 配置生成参数，使用结构化输出
+    config = types.GenerateContentConfig(
+        system_instruction=INTERSET,
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema={
+            "type": "object",
+            "properties": {
+                "value": {"type": "boolean", "description": "是否感兴趣"}
+            },
+            "required": ["value"]
+        }
+    )
+    
+    response = client.models.generate_content(
+        model=Config.chat_model,
+        contents=contents,
+        config=config
+    )
+    
+    return json.loads(response.text)["value"]
 
 
 def replyMsg(msgs: list, resume: str, character: str):
@@ -93,34 +162,100 @@ def replyMsg(msgs: list, resume: str, character: str):
         return ''
     # 获取回复
     content = ''
-    msgs.insert(0, Message(role='system', content=CHAT.format(
+    
+    # 创建系统提示
+    system_prompt = CHAT.format(
         resume=resume,
         character=character
-    )))
-    for i in chat(Config.chat_model, messages=msgs, stream=True, options={
-        "temperature": 0.4,
-        "num_ctx": 10240,
-    }):
-        word = i.message.content
-        content += word
-        print(word, end="", flush=True)
+    )
+    
+    # 创建消息内容
+    contents = []
+    
+    # 添加对话历史
+    for msg in msgs:
+        contents.append(types.Part.from_text(text=msg.content))
+    
+    # 配置生成参数
+    config = types.GenerateContentConfig(
+        system_instruction=system_prompt,
+        temperature=0.4,
+        max_output_tokens=options.get("max_output_tokens", 8192),
+    )
+    
+    # 流式生成内容
+    for chunk in client.models.generate_content_stream(
+        model=Config.chat_model,
+        contents=contents,
+        config=config
+    ):
+        if chunk.text:
+            word = chunk.text
+            content += word
+            print(word, end="", flush=True)
     print()
     return getLLMReply(content)
 
 
 def isNeedResume(msgs: list):
     """判断是否需要简历"""
-    msgs.insert(0, Message(role='system', content=NEEDRESUME))
-    return json.loads(chat(Config.chat_model, msgs, format=NeedResume.model_json_schema(), options={
-        "temperature": 0.2,
-        "num_ctx": 10240,
-    }).message.content)['need']
+    # 创建消息内容
+    contents = []
+    
+    # 添加对话历史
+    for msg in msgs:
+        contents.append(types.Part.from_text(text=msg.content))
+    
+    # 配置生成参数，使用结构化输出
+    config = types.GenerateContentConfig(
+        system_instruction=NEEDRESUME,
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema={
+            "type": "object",
+            "properties": {
+                "need": {"type": "boolean", "description": "是否需要简历"}
+            },
+            "required": ["need"]
+        }
+    )
+    
+    response = client.models.generate_content(
+        model=Config.chat_model,
+        contents=contents,
+        config=config
+    )
+    
+    return json.loads(response.text)["need"]
 
 
 def isNeedWorks(msgs: list):
     """判断是否需要作品集"""
-    msgs.insert(0, Message(role='system', content=NEEDWORKS))
-    return json.loads(chat(Config.chat_model, msgs, format=NeedWorks.model_json_schema(), options={
-        "temperature": 0.2,
-        "num_ctx": 10240,
-    }).message.content)['need']
+    # 创建消息内容
+    contents = []
+    
+    # 添加对话历史
+    for msg in msgs:
+        contents.append(types.Part.from_text(text=msg.content))
+    
+    # 配置生成参数，使用结构化输出
+    config = types.GenerateContentConfig(
+        system_instruction=NEEDWORKS,
+        temperature=0.2,
+        response_mime_type="application/json",
+        response_schema={
+            "type": "object",
+            "properties": {
+                "need": {"type": "boolean", "description": "是否需要作品集"}
+            },
+            "required": ["need"]
+        }
+    )
+    
+    response = client.models.generate_content(
+        model=Config.chat_model,
+        contents=contents,
+        config=config
+    )
+    
+    return json.loads(response.text)["need"]
