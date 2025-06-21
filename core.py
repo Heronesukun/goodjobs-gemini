@@ -1,10 +1,4 @@
-'''
-Description: 一些具体实现
-Author: 嘎嘣脆的贝爷
-Date: 2025-02-16 01:13:59
-LastEditTime: 2025-03-10 22:03:47
-LastEditors: 嘎嘣脆的贝爷
-'''
+
 # 导入Google GenAI SDK
 from google import genai
 from google.genai import types
